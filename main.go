@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var NewDirs chan os.DirEntry
+// var NewDirs chan os.DirEntry
 var StoreDir string
 var TgApiToken string
 var TgApiChatId int64
@@ -68,7 +68,15 @@ func TgSendPhoto(s OsHandler) {
 	}
 }
 func (s *OsHandler) Delete() error {
-	out := exec.Command("rm", s.fPath)
+	out := exec.Command("rm", "-r", s.fPath)
+	err := out.Run()
+	return err
+}
+
+func (s *OsHandler) Rename(newName string) error {
+	indxFile := strings.LastIndex(s.fPath, "/")
+	newfPath := fmt.Sprint(s.fPath[:indxFile], newName)
+	out := exec.Command("mv", s.fPath, newfPath)
 	err := out.Run()
 	return err
 }
@@ -91,34 +99,73 @@ func (s *OsHandler) ReceivePhoto() error {
 //	return nil
 //}
 
-func readStore(i chan os.DirEntry) error {
-	var DirModTime time.Time    //время создания последней папки за все сканирование
-	var newDirModTime time.Time //время самой новой папки в текущем сканировании
-	DirModTime = time.Date(1970, 01, 01, 0, 0, 0, 0, time.Local)
-	for { // Сканируем папки директории
+func readStore() {
+	//tLastScan := time.Date(1970, 01, 01, 0, 0, 0, 0, time.Local) //время создания последнего файла за сканирование
+	//var tNewScan time.Time                                       //время самой новой папки в текущем сканировании
+	currDate := time.Now().Format("20060102")
+	var s OsHandler
+	for { // Сканируем папку хранилища
 		allDirs, err := os.ReadDir(StoreDir)
 		if err != nil {
-			return err
+			log.Printf("Error read dir, %s", err.Error())
+			return
 		}
 
 		for _, currDir := range allDirs {
 			if currDir.IsDir() { //Это папка?
-				currDateDir, err := currDir.Info() //Получим информацию
+				currInfoDir, err := currDir.Info() //Получим информацию о папке
 				if err != nil {
-					return err
+					log.Printf("Read file info error, %s", err.Error())
+					return
 				}
-				if currDateDir.ModTime().After(DirModTime) { //Папка создана после последнего сканирования?
-					i <- currDir
-					if currDateDir.ModTime().After(newDirModTime) { //Поиск самой новой папки
-						newDirModTime = currDateDir.ModTime()
+				if time.Since(currInfoDir.ModTime()).Hours() > 720 { //удалим папку если старая
+					s.fPath = fmt.Sprintf("%s%s", StoreDir, currDir.Name())
+					err := s.Delete()
+					if err != nil {
+						log.Printf("Err delete dir: %s, %s", s.fPath, err.Error())
+						//return
+					}
+					continue
+				}
+
+				if currInfoDir.Name() == currDate { //найдем сегодняшнюю папку
+					pFiles := fmt.Sprintf("%s%s/picture", StoreDir, currDate)
+					allFiles, err := os.ReadDir(pFiles) //прочитаем файлы из этой папки
+					if err != nil {
+						log.Printf("Err read dir: %s, %s", pFiles, err.Error())
+						return
+					}
+					for _, currFile := range allFiles {
+
+						if !currFile.IsDir() && strings.Contains(currFile.Name(), ".jpeg") &&
+							!strings.Contains(currFile.Name(), "[POSTED].jpeg") {
+							s.fPath = fmt.Sprintf("%s%s/picture/%s", StoreDir, currDate, currFile.Name())
+							s.Caption = currFile.Name()
+							TgSendPhoto(s)
+							//newName := currFile.Name()
+							newName := strings.TrimRight(currFile.Name(), ".jpeg")
+							newName = fmt.Sprintf("%s[POSTED].jpeg", newName)
+							err := os.Rename(s.fPath, fmt.Sprintf("%s%s/picture/%s", StoreDir, currDate, newName))
+							if err != nil {
+								log.Printf("Error rename file %s:  %s", newName, err.Error())
+								return
+							}
+
+						}
 					}
 
 				}
+
+				//if currInfoDir.ModTime().After(DirModTime) { //Папка создана после последнего сканирования?
+				//	i <- currDir
+				//	if currInfoDir.ModTime().After(newDirModTime) { //Поиск самой новой папки
+				//		newDirModTime = currInfoDir.ModTime()
+				//	}
+				//
+				//}
 			}
 		}
-		DirModTime = newDirModTime // Запишем самое последнее изменение папок после последнего сканирования
-
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(1000 * time.Millisecond)
 	}
 
 }
@@ -176,8 +223,15 @@ func tgCommandHandler() error {
 }
 func main() {
 	//Initialization
-	NewDirs = make(chan os.DirEntry, 30) //канал для передачи имени папки
-	err := godotenv.Load("conf.env")
+	file, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatal("Failed to open log file:", err)
+	}
+	log.SetOutput(file)
+
+	//NewDirs = make(chan os.DirEntry, 30) //канал для передачи имени папки
+
+	err = godotenv.Load("conf.env")
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
@@ -199,32 +253,16 @@ func main() {
 	}
 	TgBot.Debug = true
 	log.Printf("Authorized on account %s", TgBot.Self.UserName)
-	helloMsg := tgbotapi.NewMessage(TgApiChatId, "Bot started")
-	_, err = TgBot.Send(helloMsg)
-	if err != nil {
-		return
-	}
+	TgSendText("Bot started")
 
 	//Start commands handler
 	go func() {
 		err := tgCommandHandler()
 		if err != nil {
-
+			log.Println(err)
 		}
 	}()
 	//Start
-	go func() {
-		err := readStore(NewDirs)
-		if err != nil {
-
-		}
-	}()
-	//fmt.Println(dir)
-	for cdir := range NewDirs {
-		if cdir.IsDir() {
-			inf, _ := cdir.Info()
-			fmt.Println(cdir.Name(), "Info:", inf.ModTime())
-		}
-	}
+	readStore()
 
 }
