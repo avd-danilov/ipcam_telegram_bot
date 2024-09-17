@@ -102,7 +102,7 @@ func (s *OsHandler) ReceivePhoto() error {
 func readStore() {
 	//tLastScan := time.Date(1970, 01, 01, 0, 0, 0, 0, time.Local) //время создания последнего файла за сканирование
 	//var tNewScan time.Time                                       //время самой новой папки в текущем сканировании
-	currDate := time.Now().Format("20060102")
+
 	var s OsHandler
 	for { // Сканируем папку хранилища
 		allDirs, err := os.ReadDir(StoreDir)
@@ -110,7 +110,7 @@ func readStore() {
 			log.Printf("Error read dir, %s", err.Error())
 			return
 		}
-
+		currDate := time.Now().Format("20060102")
 		for _, currDir := range allDirs {
 			if currDir.IsDir() { //Это папка?
 				currInfoDir, err := currDir.Info() //Получим информацию о папке
