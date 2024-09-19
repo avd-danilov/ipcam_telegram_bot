@@ -128,10 +128,13 @@ func readStore() {
 					continue
 				}
 
-				if currInfoDir.Name() == currDate { //найдем сегодняшнюю папку
+				if currInfoDir.Name() == currDate { //search today dir
 					pFiles := fmt.Sprintf("%s%s/picture", StoreDir, currDate)
 					allFiles, err := os.ReadDir(pFiles) //прочитаем файлы из этой папки
-					if err != nil {
+					if err != nil {                     //if no file`s in directory
+						if !strings.Contains(err.Error(), "no such file or directory") {
+							continue
+						}
 						log.Printf("Err read dir: %s, %s", pFiles, err.Error())
 						return
 					}
